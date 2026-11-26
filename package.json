@@ -1,0 +1,17 @@
+{
+  "name": "repo-checkup",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.21.0",
+  "scripts": {
+    "dev": "pnpm --filter @repo-checkup/shared build && pnpm --parallel --filter @repo-checkup/server --filter @repo-checkup/web dev",
+    "dev:server": "pnpm --filter @repo-checkup/shared build && pnpm --filter @repo-checkup/server dev",
+    "dev:web": "pnpm --filter @repo-checkup/shared build && pnpm --filter @repo-checkup/web dev",
+    "build": "pnpm --filter @repo-checkup/shared build && pnpm --filter @repo-checkup/server build && pnpm --filter @repo-checkup/web build",
+    "typecheck": "pnpm --filter @repo-checkup/shared build && pnpm -r typecheck",
+    "test": "pnpm --filter @repo-checkup/shared build && pnpm -r test"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.2"
+  }
+}
