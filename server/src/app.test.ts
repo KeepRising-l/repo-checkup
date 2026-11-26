@@ -34,4 +34,14 @@ describe('server API routes', () => {
       code: 'UNSUPPORTED_PLATFORM',
     });
   });
+
+  it('returns safe AI config status without apiKey from GET /api/ai/config', async () => {
+    const app = createApp();
+    const res = await app.request('/api/ai/config');
+
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as Record<string, unknown>;
+    expect(typeof json.hasEnvConfig).toBe('boolean');
+    expect(json).not.toHaveProperty('apiKey');
+  });
 });

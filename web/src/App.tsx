@@ -1,5 +1,7 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type {
+  AiAdviceReport,
+  AiConfigStatus,
   CheckDimensionId,
   GitPlatform,
   RiskSeverity,
@@ -13,10 +15,20 @@ import {
   ShieldCheck,
   TerminalSquare,
 } from 'lucide-react';
+import {
+  AiAdviceSection,
+  type AiUiConfigState,
+} from './components/AiAdviceSection';
 import { RepoInputBar } from './components/RepoInputBar';
 import { RiskList } from './components/RiskList';
 import { ScoreOverview } from './components/ScoreOverview';
-import { ScanApiError, scanRepository } from './lib/api';
+import {
+  fetchAiModels,
+  generateAiAdvice,
+  getAiConfigStatus,
+  ScanApiError,
+  scanRepository,
+} from './lib/api';
 
 interface PlatformMeta {
   id: GitPlatform;
@@ -82,6 +94,43 @@ export default function App() {
   >('all');
   const scanSeqRef = useRef(0);
 
+  const [aiConfigStatus, setAiConfigStatus] = useState<AiConfigStatus | null>(
+    null,
+  );
+  const [aiUiConfig, setAiUiConfig] = useState<AiUiConfigState>({
+    baseUrl: '',
+    apiKey: '',
+    model: '',
+    availableModels: [],
+    showCustomPanel: false,
+  });
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [loadingAdvice, setLoadingAdvice] = useState(false);
+  const [aiNotice, setAiNotice] = useState<string | null>(null);
+  const [aiReport, setAiReport] = useState<AiAdviceReport | null>(null);
+  const aiSeqRef = useRef(0);
+
+  useEffect(() => {
+    let active = true;
+    getAiConfigStatus()
+      .then((status) => {
+        if (!active) return;
+        setAiConfigStatus(status);
+        setAiUiConfig((prev) => ({
+          ...prev,
+          baseUrl: prev.baseUrl || status.defaultBaseUrl || '',
+          model: prev.model || status.defaultModel || '',
+          showCustomPanel: !status.hasEnvConfig,
+        }));
+      })
+      .catch(() => {
+        // Keep main workflow unaffected if AI config probe fails.
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   async function handleScan() {
     const trimmed = repoUrl.trim();
     if (!trimmed) {
@@ -90,10 +139,14 @@ export default function App() {
     }
 
     const currentSeq = ++scanSeqRef.current;
+    aiSeqRef.current++;
     setLoading(true);
     setActiveScanUrl(trimmed);
     setError(null);
     setReport(null);
+    setAiReport(null);
+    setAiNotice(null);
+    setLoadingAdvice(false);
     setSelectedDimension('all');
     setSelectedSeverity('all');
 
@@ -116,6 +169,104 @@ export default function App() {
       if (scanSeqRef.current === currentSeq) {
         setLoading(false);
         setActiveScanUrl(null);
+      }
+    }
+  }
+
+  async function handleFetchModels() {
+    const hasEnv = Boolean(aiConfigStatus?.hasEnvConfig);
+    const hasCustomKey = Boolean(aiUiConfig.apiKey.trim());
+    if (!hasEnv && !hasCustomKey) {
+      setAiNotice('请先填写 API Key（或在本地 .env 中配置 AI_API_KEY），再拉取可用模型列表。');
+      setAiUiConfig((prev) => ({ ...prev, showCustomPanel: true }));
+      return;
+    }
+
+    setLoadingModels(true);
+    setAiNotice(null);
+
+    try {
+      const res = await fetchAiModels({
+        ...(aiUiConfig.baseUrl.trim()
+          ? { baseUrl: aiUiConfig.baseUrl.trim() }
+          : {}),
+        ...(aiUiConfig.apiKey.trim()
+          ? { apiKey: aiUiConfig.apiKey.trim() }
+          : {}),
+      });
+
+      setAiUiConfig((prev) => ({
+        ...prev,
+        availableModels: res.models,
+        model: prev.model.trim() || res.models[0] || '',
+      }));
+
+      if (res.models.length === 0) {
+        setAiNotice('接口返回成功但模型列表为空，请在输入框中手动填写模型名称。');
+      }
+    } catch (err) {
+      setAiNotice(
+        err instanceof ScanApiError
+          ? err.message
+          : '拉取模型列表失败，你也可以直接手动填写模型名称。',
+      );
+    } finally {
+      setLoadingModels(false);
+    }
+  }
+
+  async function handleGenerateAdvice() {
+    if (!report) return;
+
+    const hasEnv = Boolean(aiConfigStatus?.hasEnvConfig);
+    const hasCustomKey = Boolean(aiUiConfig.apiKey.trim());
+    if (!hasEnv && !hasCustomKey) {
+      setAiNotice('尚未配置 AI API Key：请在本地 .env 中配置，或在上方设置面板填写 Base URL 与 API Key 后再生成。');
+      setAiUiConfig((prev) => ({ ...prev, showCustomPanel: true }));
+      return;
+    }
+
+    const effectiveModel =
+      aiUiConfig.model.trim() || aiConfigStatus?.defaultModel || '';
+    if (!effectiveModel) {
+      setAiNotice('请先拉取并选择模型，或手动填写模型名称（例如 gpt-4o-mini）。');
+      setAiUiConfig((prev) => ({ ...prev, showCustomPanel: true }));
+      return;
+    }
+
+    const currentAiSeq = ++aiSeqRef.current;
+    setLoadingAdvice(true);
+    setAiNotice(null);
+
+    try {
+      const advice = await generateAiAdvice({
+        report,
+        config: {
+          ...(aiUiConfig.baseUrl.trim()
+            ? { baseUrl: aiUiConfig.baseUrl.trim() }
+            : {}),
+          ...(aiUiConfig.apiKey.trim()
+            ? { apiKey: aiUiConfig.apiKey.trim() }
+            : {}),
+          model: effectiveModel,
+        },
+      });
+      if (aiSeqRef.current !== currentAiSeq) {
+        return;
+      }
+      setAiReport(advice);
+    } catch (err) {
+      if (aiSeqRef.current !== currentAiSeq) {
+        return;
+      }
+      setAiNotice(
+        err instanceof ScanApiError
+          ? err.message
+          : '生成 AI 建议失败，请检查模型配置或稍后重试。',
+      );
+    } finally {
+      if (aiSeqRef.current === currentAiSeq) {
+        setLoadingAdvice(false);
       }
     }
   }
@@ -158,7 +309,11 @@ export default function App() {
             setRepoUrl(nextUrl);
             if (error) setError(null);
             if (!nextUrl.trim() && !loading) {
+              aiSeqRef.current++;
               setReport(null);
+              setAiReport(null);
+              setAiNotice(null);
+              setLoadingAdvice(false);
               setSelectedDimension('all');
               setSelectedSeverity('all');
             }
@@ -191,6 +346,20 @@ export default function App() {
               report={report}
               selectedDimension={selectedDimension}
               onSelectDimension={setSelectedDimension}
+            />
+            <AiAdviceSection
+              configStatus={aiConfigStatus}
+              uiConfig={aiUiConfig}
+              loadingModels={loadingModels}
+              loadingAdvice={loadingAdvice}
+              notice={aiNotice}
+              aiReport={aiReport}
+              onUpdateConfig={(patch) => {
+                setAiUiConfig((prev) => ({ ...prev, ...patch }));
+                if (aiNotice) setAiNotice(null);
+              }}
+              onFetchModels={handleFetchModels}
+              onGenerateAdvice={handleGenerateAdvice}
             />
             <RiskList
               risks={report.risks}

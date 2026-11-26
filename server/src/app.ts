@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { aiRoute } from './routes/ai.js';
 import { scanRoute } from './routes/scan.js';
 
 export function createApp() {
@@ -15,6 +16,7 @@ export function createApp() {
   });
 
   app.route('/api/scan', scanRoute);
+  app.route('/api/ai', aiRoute);
 
   return app;
 }

@@ -1,4 +1,9 @@
 import type {
+  AiAdviceReport,
+  AiAdviceRequest,
+  AiConfigStatus,
+  AiModelsRequest,
+  AiModelsResponse,
   GitPlatform,
   ScanErrorResponse,
   ScanReport,
@@ -14,17 +19,9 @@ export class ScanApiError extends Error {
   }
 }
 
-export async function scanRepository(repoUrl: string): Promise<ScanReport> {
-  const response = await fetch('/api/scan', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ repoUrl }),
-  });
-
+async function parseJsonResponse<T>(response: Response): Promise<T> {
   const payload = (await response.json().catch(() => null)) as
-    | ScanReport
+    | T
     | ScanErrorResponse
     | null;
 
@@ -36,7 +33,52 @@ export async function scanRepository(repoUrl: string): Promise<ScanReport> {
     );
   }
 
-  return payload as ScanReport;
+  return payload as T;
+}
+
+export async function scanRepository(repoUrl: string): Promise<ScanReport> {
+  const response = await fetch('/api/scan', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ repoUrl }),
+  });
+
+  return parseJsonResponse<ScanReport>(response);
+}
+
+export async function getAiConfigStatus(): Promise<AiConfigStatus> {
+  const response = await fetch('/api/ai/config');
+  return parseJsonResponse<AiConfigStatus>(response);
+}
+
+export async function fetchAiModels(
+  request: AiModelsRequest,
+): Promise<AiModelsResponse> {
+  const response = await fetch('/api/ai/models', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  });
+
+  return parseJsonResponse<AiModelsResponse>(response);
+}
+
+export async function generateAiAdvice(
+  request: AiAdviceRequest,
+): Promise<AiAdviceReport> {
+  const response = await fetch('/api/ai/advice', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  });
+
+  return parseJsonResponse<AiAdviceReport>(response);
 }
 
 export interface InputHint {

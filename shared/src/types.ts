@@ -77,3 +77,54 @@ export interface ScanErrorResponse {
   error: string;
   code: string;
 }
+
+export interface AiConfigStatus {
+  hasEnvConfig: boolean;
+  defaultBaseUrl?: string;
+  defaultModel?: string;
+}
+
+export interface AiClientConfig {
+  baseUrl?: string;
+  apiKey?: string;
+  model?: string;
+}
+
+export interface AiModelsRequest {
+  baseUrl?: string;
+  apiKey?: string;
+}
+
+export interface AiModelsResponse {
+  models: string[];
+  source: 'env' | 'custom';
+}
+
+export interface AiAdviceRequest {
+  report: ScanReport;
+  config?: AiClientConfig;
+}
+
+export interface AiAdviceDetail {
+  whyItMatters: string;
+  relatedFiles: string[];
+  actionSteps: string[];
+  expectedImpact: string;
+}
+
+export interface AiAdviceItem {
+  id: string;
+  title: string;
+  severity: RiskSeverity;
+  summary: string;
+  detail: AiAdviceDetail;
+}
+
+export interface AiAdviceReport {
+  aiScore: number;
+  overview: string;
+  items: AiAdviceItem[];
+  modelUsed: string;
+  configSource: 'env' | 'custom';
+  generatedAt: string;
+}

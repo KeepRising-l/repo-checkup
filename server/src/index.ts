@@ -1,5 +1,8 @@
 import { serve } from '@hono/node-server';
 import { createApp } from './app.js';
+import { loadLocalEnv } from './services/envLoader.js';
+
+loadLocalEnv();
 
 const port = Number(process.env.PORT ?? 3001);
 const app = createApp();
