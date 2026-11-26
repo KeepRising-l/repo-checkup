@@ -33,6 +33,16 @@ describe('server API routes', () => {
     expect(await badHostRes.json()).toMatchObject({
       code: 'UNSUPPORTED_PLATFORM',
     });
+
+    const badStreamRes = await app.request('/api/scan/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repoUrl: 'https://example.com/foo/bar' }),
+    });
+    expect(badStreamRes.status).toBe(400);
+    expect(await badStreamRes.json()).toMatchObject({
+      code: 'UNSUPPORTED_PLATFORM',
+    });
   });
 
   it('returns safe AI config status without apiKey from GET /api/ai/config', async () => {

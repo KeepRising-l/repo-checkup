@@ -128,3 +128,18 @@ export interface AiAdviceReport {
   configSource: 'env' | 'custom';
   generatedAt: string;
 }
+
+export type ScanStage =
+  | 'validate'
+  | 'clone'
+  | 'metadata'
+  | 'scan'
+  | 'score'
+  | 'done';
+
+export interface ScanProgressEvent {
+  stage: ScanStage;
+  percent: number;
+  label: string;
+  detail?: string;
+}

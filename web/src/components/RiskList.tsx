@@ -36,8 +36,8 @@ const SEVERITY_META: Record<
   },
   low: {
     label: '低危',
-    badgeClass: 'border-sky-200 bg-sky-50 text-sky-700',
-    borderClass: 'border-l-sky-500',
+    badgeClass: 'border-[#e7e5e4] bg-[#f5f5f4] text-[#57534e]',
+    borderClass: 'border-l-[#a8a29e]',
   },
 };
 
@@ -82,15 +82,15 @@ export function RiskList({
   };
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs">
-      <div className="flex flex-col gap-4 border-b border-slate-100 pb-4">
+    <section className="rounded-2xl border border-[#e7e5e4] bg-white p-7 shadow-[0_2px_10px_rgba(28,25,23,0.03)]">
+      <div className="flex flex-col gap-4 border-b border-[#e7e5e4] pb-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <FileWarning className="h-5 w-5 text-slate-700" />
-            <h2 className="text-base font-semibold text-slate-900">
-              主要风险清单
+          <div className="flex items-center gap-2.5">
+            <FileWarning className="h-4 w-4 text-[#57534e]" />
+            <h2 className="text-base font-semibold text-[#1c1917]">
+              静态扫描风险清单
             </h2>
-            <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600">
+            <span className="rounded-full border border-[#e7e5e4] bg-[#fafaf9] px-2.5 py-0.5 font-mono text-xs text-[#57534e] tabular-nums">
               {filteredRisks.length} / {risks.length}
             </span>
           </div>
@@ -102,7 +102,7 @@ export function RiskList({
                 onSelectDimension('all');
                 onSelectSeverity('all');
               }}
-              className="text-xs font-medium text-indigo-600 hover:text-indigo-700"
+              className="cursor-pointer text-xs font-medium text-[#1c1917] underline underline-offset-4 hover:text-[#57534e]"
             >
               重置筛选
             </button>
@@ -110,9 +110,8 @@ export function RiskList({
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
-          {/* Dimension Filter */}
           <div className="flex flex-wrap items-center gap-1.5">
-            <Filter className="mr-1 h-3.5 w-3.5 text-slate-400" />
+            <Filter className="mr-1 h-3.5 w-3.5 text-[#a8a29e]" />
             {DIMENSION_OPTIONS.map((opt) => {
               const active = selectedDimension === opt.id;
               return (
@@ -120,10 +119,10 @@ export function RiskList({
                   key={opt.id}
                   type="button"
                   onClick={() => onSelectDimension(opt.id)}
-                  className={`rounded-lg px-2.5 py-1 text-xs font-medium transition ${
+                  className={`cursor-pointer rounded-full border px-3 py-1 text-xs font-medium transition ${
                     active
-                      ? 'bg-slate-900 text-white'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      ? 'border-[#1c1917] bg-[#1c1917] text-white'
+                      : 'border-[#e7e5e4] bg-[#fafaf9] text-[#57534e] hover:border-[#d6d3d1] hover:text-[#1c1917]'
                   }`}
                 >
                   {opt.label}
@@ -132,7 +131,6 @@ export function RiskList({
             })}
           </div>
 
-          {/* Severity Filter */}
           <div className="flex flex-wrap items-center gap-1.5">
             {SEVERITY_OPTIONS.map((opt) => {
               const active = selectedSeverity === opt.id;
@@ -141,10 +139,10 @@ export function RiskList({
                   key={opt.id}
                   type="button"
                   onClick={() => onSelectSeverity(opt.id)}
-                  className={`rounded-lg px-2.5 py-1 text-xs font-medium transition ${
+                  className={`cursor-pointer rounded-full border px-3 py-1 text-xs font-medium transition ${
                     active
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      ? 'border-[#1c1917] bg-[#1c1917] text-white'
+                      : 'border-[#e7e5e4] bg-[#fafaf9] text-[#57534e] hover:border-[#d6d3d1] hover:text-[#1c1917]'
                   }`}
                 >
                   {opt.label} ({severityCounts[opt.id]})
@@ -157,56 +155,58 @@ export function RiskList({
 
       {risks.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-12 text-center">
-          <CheckCircle2 className="h-10 w-10 text-emerald-500" />
-          <p className="mt-3 text-sm font-medium text-slate-900">
-            太棒了！本次体检未发现明显接入风险
+          <CheckCircle2 className="h-9 w-9 text-emerald-600" />
+          <p className="mt-3 text-sm font-medium text-[#1c1917]">
+            本次体检未发现静态扫描风险
           </p>
-          <p className="mt-1 text-xs text-slate-500">
-            四大核心维度均表现良好，可以直接尝试拉取并启动验证。
+          <p className="mt-1 text-xs text-[#78716c]">
+            四大核心维度表现良好，可以直接尝试拉取并启动验证。
           </p>
         </div>
       ) : filteredRisks.length === 0 ? (
-        <div className="py-10 text-center text-sm text-slate-500">
-          当前筛选条件下暂无风险项，可点击上方「重置筛选」查看全部风险。
+        <div className="py-10 text-center text-xs text-[#78716c]">
+          当前筛选条件下暂无风险项，可点击右上角「重置筛选」查看全部风险。
         </div>
       ) : (
-        <div className="mt-4 space-y-3">
+        <div className="mt-5 space-y-3">
           {filteredRisks.map((risk) => {
             const sev = SEVERITY_META[risk.severity];
             return (
               <article
                 key={risk.id}
-                className={`rounded-xl border border-slate-200 border-l-4 ${sev.borderClass} bg-slate-50/50 p-4`}
+                className={`rounded-xl border border-[#e7e5e4] border-l-4 ${sev.borderClass} bg-[#fafaf9]/70 p-4 transition hover:border-[#d6d3d1] hover:bg-white`}
               >
                 <div className="flex flex-wrap items-center gap-2">
                   <span
-                    className={`rounded-md border px-2 py-0.5 text-xs font-semibold ${sev.badgeClass}`}
+                    className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${sev.badgeClass}`}
                   >
                     {sev.label}
                   </span>
-                  <span className="rounded-md bg-slate-200/70 px-2 py-0.5 text-xs font-medium text-slate-700">
+                  <span className="rounded-full border border-[#e7e5e4] bg-white px-2.5 py-0.5 text-xs text-[#57534e]">
                     {DIMENSION_LABELS[risk.dimension]}
                   </span>
-                  <h3 className="text-sm font-semibold text-slate-900">
+                  <h3 className="text-sm font-semibold text-[#1c1917]">
                     {risk.title}
                   </h3>
                 </div>
 
                 {risk.filePath && (
-                  <div className="mt-2 font-mono text-xs text-slate-600">
-                    文件位置：{risk.filePath}
+                  <div className="mt-2 font-mono text-xs text-[#57534e]">
+                    {risk.filePath}
                     {risk.line ? `:${risk.line}` : ''}
                   </div>
                 )}
 
                 {risk.snippet && (
-                  <pre className="mt-2 overflow-x-auto rounded-lg bg-slate-900 px-3 py-2 font-mono text-xs text-slate-100">
+                  <pre className="mt-2.5 overflow-x-auto rounded-lg bg-[#1c1917] px-3.5 py-2.5 font-mono text-xs text-[#fafaf9]">
                     <code>{risk.snippet}</code>
                   </pre>
                 )}
 
-                <p className="mt-2.5 text-xs leading-relaxed text-slate-600">
-                  <span className="font-medium text-slate-700">整改建议：</span>
+                <p className="mt-2.5 text-xs leading-relaxed text-[#57534e]">
+                  <span className="font-semibold text-[#292524]">
+                    整改建议：
+                  </span>
                   {risk.suggestion}
                 </p>
               </article>

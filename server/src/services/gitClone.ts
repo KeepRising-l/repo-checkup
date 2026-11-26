@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -39,9 +39,17 @@ export interface CloneResult {
   cleanup: () => Promise<void>;
 }
 
+export interface CloneProgressInfo {
+  stage: 'clone' | 'metadata';
+  percent: number;
+  label: string;
+  detail?: string;
+}
+
 export interface CloneOptions {
   timeoutMs?: number;
   baseTempDir?: string;
+  onProgress?: (info: CloneProgressInfo) => void;
 }
 
 function buildGitEnv(): NodeJS.ProcessEnv {
@@ -246,6 +254,114 @@ async function readGitMetadata(
   };
 }
 
+async function runGitCloneWithProgress(
+  args: string[],
+  timeoutMs: number,
+  onProgress?: (info: CloneProgressInfo) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', args, {
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: buildGitEnv(),
+    });
+
+    const stderrChunks: string[] = [];
+    let pendingFragment = '';
+    let lastPercent = 12;
+    let timedOut = false;
+    let settled = false;
+
+    const emit = (
+      stage: 'clone' | 'metadata',
+      percent: number,
+      label: string,
+      detail?: string,
+    ) => {
+      if (percent > lastPercent || (percent === lastPercent && detail)) {
+        lastPercent = Math.max(lastPercent, percent);
+        onProgress?.({ stage, percent: lastPercent, label, detail });
+      }
+    };
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+    }, timeoutMs);
+
+    const parseProgressLine = (line: string) => {
+      const receiving = /Receiving objects:\s*(\d+)%/i.exec(line);
+      if (receiving?.[1]) {
+        const pct = Number(receiving[1]);
+        const mapped = 15 + Math.round((pct / 100) * 37);
+        emit('clone', mapped, '正在拉取仓库数据', `Receiving objects: ${pct}%`);
+        return;
+      }
+
+      const resolving = /Resolving deltas:\s*(\d+)%/i.exec(line);
+      if (resolving?.[1]) {
+        const pct = Number(resolving[1]);
+        const mapped = 52 + Math.round((pct / 100) * 10);
+        emit('clone', mapped, '正在解析增量对象', `Resolving deltas: ${pct}%`);
+        return;
+      }
+
+      const updating = /Updating files:\s*(\d+)%/i.exec(line);
+      if (updating?.[1]) {
+        const pct = Number(updating[1]);
+        const mapped = 62 + Math.round((pct / 100) * 6);
+        emit('clone', mapped, '正在检出工作区文件', `Updating files: ${pct}%`);
+        return;
+      }
+
+      if (/Cloning into/i.test(line)) {
+        emit('clone', 14, '正在建立仓库连接');
+      }
+    };
+
+    child.stderr?.on('data', (chunk: Buffer) => {
+      const text = chunk.toString('utf8');
+      stderrChunks.push(text);
+      const combined = pendingFragment + text;
+      const parts = combined.split(/[\r\n]+/);
+      pendingFragment = /[\r\n]$/.test(combined) ? '' : (parts.pop() ?? '');
+      for (const part of parts) {
+        const trimmed = part.trim();
+        if (trimmed) {
+          parseProgressLine(trimmed);
+        }
+      }
+    });
+
+    child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(err);
+    });
+
+    child.on('close', (code, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (pendingFragment.trim()) {
+        parseProgressLine(pendingFragment.trim());
+      }
+
+      const stderr = stderrChunks.join('');
+      if (timedOut || signal === 'SIGTERM') {
+        reject({ killed: true, signal: 'SIGTERM', stderr });
+        return;
+      }
+      if (code !== 0) {
+        reject({ code, stderr });
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
 /**
  * Low-level shallow clone helper (also usable in tests against local git repositories).
  */
@@ -263,6 +379,7 @@ export async function cloneFromTarget(
 
   const cloneArgs = [
     'clone',
+    '--progress',
     '--depth',
     '1',
     '--single-branch',
@@ -281,11 +398,26 @@ export async function cloneFromTarget(
   cloneArgs.push('--', cloneTarget, repoDir);
 
   try {
-    await runGit(cloneArgs, { timeoutMs });
+    options.onProgress?.({
+      stage: 'clone',
+      percent: 12,
+      label: '正在连接远程仓库并浅克隆',
+    });
+    await runGitCloneWithProgress(cloneArgs, timeoutMs, options.onProgress);
+    options.onProgress?.({
+      stage: 'metadata',
+      percent: 70,
+      label: '正在提取分支与 Commit 快照',
+    });
     const meta = await readGitMetadata(repoDir, requestedBranch);
     // Remove .git immediately after reading branch/commit metadata so scanners never inspect it
     // and Windows read-only packfile handles are cleared early.
     await removeDirectoryCrossPlatform(path.join(repoDir, '.git'));
+    options.onProgress?.({
+      stage: 'metadata',
+      percent: 74,
+      label: '已清理 .git 目录，准备扫描文件',
+    });
 
     return {
       tempRoot,

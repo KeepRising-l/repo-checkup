@@ -1,3 +1,6 @@
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ScanReport } from '@repo-checkup/shared';
 import {
@@ -6,6 +9,7 @@ import {
   generateAiAdvice,
   getAiConfigStatus,
   normalizeBaseUrl,
+  saveAiConfig,
 } from './aiService.js';
 import { parseEnvContent } from './envLoader.js';
 
@@ -253,5 +257,47 @@ describe('envLoader & aiService', () => {
       'medium',
       'low',
     ]);
+  });
+
+  it('persists AI config to .env while preserving unrelated keys and never exposing apiKey', async () => {
+    delete process.env.AI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.AI_BASE_URL;
+    delete process.env.AI_MODEL;
+
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'repo-checkup-env-'));
+    const envPath = path.join(tmpDir, '.env');
+    await fs.writeFile(envPath, '# local config\nPORT=3001\n', 'utf8');
+
+    try {
+      const status1 = saveAiConfig(
+        {
+          baseUrl: 'https://api.deepseek.com/v1/',
+          apiKey: 'sk-saved-secret-key',
+          model: 'deepseek-chat',
+        },
+        envPath,
+      );
+
+      expect(status1).toEqual({
+        hasEnvConfig: true,
+        defaultBaseUrl: 'https://api.deepseek.com/v1',
+        defaultModel: 'deepseek-chat',
+      });
+      expect(JSON.stringify(status1)).not.toContain('sk-saved-secret-key');
+
+      // Updating only model reuses existing saved apiKey & baseUrl.
+      const status2 = saveAiConfig({ model: 'deepseek-reasoner' }, envPath);
+      expect(status2.defaultModel).toBe('deepseek-reasoner');
+
+      const written = await fs.readFile(envPath, 'utf8');
+      expect(written).toContain('# local config');
+      expect(written).toContain('PORT=3001');
+      expect(written).toContain('AI_BASE_URL=https://api.deepseek.com/v1');
+      expect(written).toContain('AI_API_KEY=sk-saved-secret-key');
+      expect(written).toContain('AI_MODEL=deepseek-reasoner');
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
   });
 });

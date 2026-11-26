@@ -67,8 +67,19 @@ describe('gitClone & cross-platform cleanup', () => {
 
     await runGitLocal(originDir, ['checkout', 'main']);
 
-    const defaultClone = await cloneFromTarget(originDir);
+    const progressPercents: number[] = [];
+    const defaultClone = await cloneFromTarget(originDir, undefined, {
+      onProgress: (info) => {
+        progressPercents.push(info.percent);
+      },
+    });
     try {
+      expect(progressPercents.length).toBeGreaterThanOrEqual(2);
+      for (let i = 1; i < progressPercents.length; i++) {
+        expect(progressPercents[i]!).toBeGreaterThanOrEqual(
+          progressPercents[i - 1]!,
+        );
+      }
       expect(defaultClone.scannedBranch).toBe('main');
       expect(defaultClone.commitSha).toMatch(/^[0-9a-f]{40}$/);
       expect(defaultClone.commitShortSha.length).toBeGreaterThanOrEqual(7);

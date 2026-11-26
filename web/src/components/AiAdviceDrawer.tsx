@@ -27,7 +27,7 @@ const SEVERITY_META: Record<
   },
   low: {
     label: '低危',
-    badgeClass: 'border-sky-200 bg-sky-50 text-sky-700',
+    badgeClass: 'border-[#e7e5e4] bg-[#f5f5f4] text-[#57534e]',
   },
 };
 
@@ -51,7 +51,7 @@ export function AiAdviceDrawer({ item, onClose }: AiAdviceDrawerProps) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex justify-end bg-slate-900/40 backdrop-blur-[1px]"
+      className="fixed inset-0 z-50 flex justify-end bg-[#1c1917]/35 backdrop-blur-[1px]"
       onClick={onClose}
     >
       <aside
@@ -59,16 +59,16 @@ export function AiAdviceDrawer({ item, onClose }: AiAdviceDrawerProps) {
         aria-modal="true"
         aria-label={item.title}
         onClick={(event) => event.stopPropagation()}
-        className="flex h-full w-full max-w-lg flex-col bg-white shadow-2xl"
+        className="drawer-enter flex h-full w-full max-w-lg flex-col border-l border-[#e7e5e4] bg-white shadow-2xl"
       >
-        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
-          <div className="space-y-2">
+        <div className="flex items-start justify-between gap-4 border-b border-[#e7e5e4] px-7 py-6">
+          <div className="space-y-2.5">
             <span
-              className={`inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold ${sev.badgeClass}`}
+              className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${sev.badgeClass}`}
             >
               {sev.label}
             </span>
-            <h3 className="text-lg font-semibold leading-snug text-slate-900">
+            <h3 className="text-lg font-semibold leading-snug text-[#1c1917]">
               {item.title}
             </h3>
           </div>
@@ -77,43 +77,43 @@ export function AiAdviceDrawer({ item, onClose }: AiAdviceDrawerProps) {
             type="button"
             onClick={onClose}
             aria-label="关闭详情"
-            className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+            className="cursor-pointer rounded-full border border-[#e7e5e4] p-2 text-[#78716c] transition hover:bg-[#f5f5f4] hover:text-[#1c1917]"
           >
-            <X className="h-5 w-5" />
+            <X className="h-4 w-4" />
           </button>
         </div>
 
-        <div className="flex-1 space-y-6 overflow-y-auto px-6 py-6">
-          <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
-            <div className="text-xs font-semibold text-indigo-700">
-              一句话结论
+        <div className="flex-1 space-y-6 overflow-y-auto px-7 py-6">
+          <div className="rounded-xl border border-[#e7e5e4] bg-[#fafaf9] p-4">
+            <div className="text-xs font-semibold text-[#78716c]">
+              大白话摘要
             </div>
-            <p className="mt-1 text-sm leading-relaxed text-slate-800">
+            <p className="mt-1.5 text-sm leading-relaxed text-[#1c1917]">
               {item.summary}
             </p>
           </div>
 
           <section className="space-y-2">
-            <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <div className="flex items-center gap-2 text-xs font-semibold tracking-wider text-[#78716c] uppercase">
               <ShieldAlert className="h-4 w-4 text-amber-600" />
               <h4>为什么会影响接入</h4>
             </div>
-            <p className="text-sm leading-relaxed text-slate-600">
+            <p className="text-sm leading-relaxed text-[#44403c]">
               {item.detail.whyItMatters}
             </p>
           </section>
 
           {item.detail.relatedFiles.length > 0 && (
             <section className="space-y-2">
-              <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-                <FileCode2 className="h-4 w-4 text-slate-600" />
+              <div className="flex items-center gap-2 text-xs font-semibold tracking-wider text-[#78716c] uppercase">
+                <FileCode2 className="h-4 w-4 text-[#57534e]" />
                 <h4>涉及文件</h4>
               </div>
               <ul className="space-y-1.5">
                 {item.detail.relatedFiles.map((file) => (
                   <li
                     key={file}
-                    className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 font-mono text-xs text-slate-700"
+                    className="rounded-lg border border-[#e7e5e4] bg-[#f5f5f4] px-3 py-2 font-mono text-xs text-[#292524]"
                   >
                     {file}
                   </li>
@@ -123,17 +123,17 @@ export function AiAdviceDrawer({ item, onClose }: AiAdviceDrawerProps) {
           )}
 
           <section className="space-y-2.5">
-            <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-              <ListChecks className="h-4 w-4 text-indigo-600" />
+            <div className="flex items-center gap-2 text-xs font-semibold tracking-wider text-[#78716c] uppercase">
+              <ListChecks className="h-4 w-4 text-[#1c1917]" />
               <h4>分步改造建议</h4>
             </div>
-            <ol className="space-y-2">
+            <ol className="space-y-2.5">
               {item.detail.actionSteps.map((step, index) => (
                 <li
                   key={`${index}-${step}`}
-                  className="flex items-start gap-2.5 rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700"
+                  className="flex items-start gap-3 rounded-xl border border-[#e7e5e4] bg-white p-3.5 text-sm text-[#292524]"
                 >
-                  <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-xs font-semibold text-indigo-700">
+                  <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#1c1917] font-mono text-[11px] font-semibold text-white">
                     {index + 1}
                   </span>
                   <span className="leading-relaxed">{step}</span>
@@ -143,11 +143,11 @@ export function AiAdviceDrawer({ item, onClose }: AiAdviceDrawerProps) {
           </section>
 
           <section className="space-y-2">
-            <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <div className="flex items-center gap-2 text-xs font-semibold tracking-wider text-[#78716c] uppercase">
               <CheckCircle2 className="h-4 w-4 text-emerald-600" />
               <h4>预期收益</h4>
             </div>
-            <p className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-3.5 text-sm leading-relaxed text-emerald-900">
+            <p className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-4 text-sm leading-relaxed text-emerald-900">
               {item.detail.expectedImpact}
             </p>
           </section>

@@ -9,6 +9,7 @@ import type {
   RiskSeverity,
   ScanReport,
 } from '@repo-checkup/shared';
+import { getWorkspaceEnvPath, upsertEnvFile } from './envLoader.js';
 
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 const MODELS_TIMEOUT_MS = 15_000;
@@ -82,6 +83,50 @@ export function getAiConfigStatus(): AiConfigStatus {
     ...(explicitBaseUrl ? { defaultBaseUrl: explicitBaseUrl } : {}),
     ...(env.model ? { defaultModel: env.model } : {}),
   };
+}
+
+export function saveAiConfig(
+  input: AiClientConfig,
+  envFilePath?: string,
+): AiConfigStatus {
+  const rawKey = input.apiKey?.trim() ?? '';
+  const rawBaseUrl = input.baseUrl?.trim() ?? '';
+  const rawModel = input.model?.trim() ?? '';
+
+  const existingKey =
+    process.env.AI_API_KEY?.trim() || process.env.OPENAI_API_KEY?.trim() || '';
+  const effectiveKey = rawKey || existingKey;
+  if (!effectiveKey) {
+    throw new AiServiceError('NO_API_KEY', '请先填写 API Key 后再保存到本地 .env');
+  }
+
+  const existingBaseUrl =
+    process.env.AI_BASE_URL?.trim() ||
+    process.env.OPENAI_BASE_URL?.trim() ||
+    '';
+  const candidateBaseUrl = rawBaseUrl || existingBaseUrl;
+  if (!candidateBaseUrl) {
+    throw new AiServiceError(
+      'INVALID_BASE_URL',
+      '请先选择或填写 Base URL 后再保存',
+    );
+  }
+  const effectiveBaseUrl = normalizeBaseUrl(candidateBaseUrl);
+
+  const targetEnvPath = envFilePath ?? getWorkspaceEnvPath();
+  upsertEnvFile(targetEnvPath, {
+    AI_BASE_URL: effectiveBaseUrl,
+    AI_API_KEY: effectiveKey,
+    ...(rawModel ? { AI_MODEL: rawModel } : {}),
+  });
+
+  process.env.AI_BASE_URL = effectiveBaseUrl;
+  process.env.AI_API_KEY = effectiveKey;
+  if (rawModel) {
+    process.env.AI_MODEL = rawModel;
+  }
+
+  return getAiConfigStatus();
 }
 
 export function normalizeBaseUrl(rawUrl: string): string {

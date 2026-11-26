@@ -44,6 +44,72 @@ export function parseEnvContent(content: string): Record<string, string> {
   return result;
 }
 
+function formatEnvValue(value: string): string {
+  const sanitized = value.replace(/[\r\n]/g, '');
+  if (!sanitized || /[\s#"'\\]/.test(sanitized)) {
+    const escaped = sanitized.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    return `"${escaped}"`;
+  }
+  return sanitized;
+}
+
+export function getWorkspaceEnvPath(): string {
+  const currentFileDir = path.dirname(fileURLToPath(import.meta.url));
+  const serverRoot = path.resolve(currentFileDir, '..', '..');
+  const workspaceRoot = path.resolve(serverRoot, '..');
+  return path.join(workspaceRoot, '.env');
+}
+
+export function upsertEnvFile(
+  envFilePath: string,
+  updates: Record<string, string | undefined>,
+): void {
+  const cleanUpdates = new Map<string, string>();
+  for (const [key, value] of Object.entries(updates)) {
+    if (value !== undefined && /^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      cleanUpdates.set(key, value);
+    }
+  }
+
+  const existingLines = fs.existsSync(envFilePath)
+    ? fs.readFileSync(envFilePath, 'utf8').split(/\r?\n/)
+    : [];
+
+  while (
+    existingLines.length > 0 &&
+    existingLines[existingLines.length - 1] === ''
+  ) {
+    existingLines.pop();
+  }
+
+  const updatedKeys = new Set<string>();
+  const nextLines = existingLines.map((rawLine) => {
+    const trimmed = rawLine.trim();
+    if (!trimmed || trimmed.startsWith('#')) {
+      return rawLine;
+    }
+    const match = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(trimmed);
+    const key = match?.[1];
+    if (key && cleanUpdates.has(key)) {
+      updatedKeys.add(key);
+      return `${key}=${formatEnvValue(cleanUpdates.get(key)!)}`;
+    }
+    return rawLine;
+  });
+
+  for (const [key, value] of cleanUpdates.entries()) {
+    if (!updatedKeys.has(key)) {
+      nextLines.push(`${key}=${formatEnvValue(value)}`);
+    }
+  }
+
+  fs.mkdirSync(path.dirname(envFilePath), { recursive: true });
+  fs.writeFileSync(envFilePath, `${nextLines.join('\n')}\n`, {
+    encoding: 'utf8',
+    mode: 0o600,
+  });
+}
+
 /**
  * Loads `.env` from workspace root and server directory without overwriting existing `process.env` keys.
  */

@@ -5,14 +5,13 @@ import type {
   CheckDimensionId,
   GitPlatform,
   RiskSeverity,
+  ScanProgressEvent,
   ScanReport,
 } from '@repo-checkup/shared';
 import {
   FileCheck2,
   FolderSearch,
   KeyRound,
-  Loader2,
-  ShieldCheck,
   TerminalSquare,
 } from 'lucide-react';
 import {
@@ -21,13 +20,15 @@ import {
 } from './components/AiAdviceSection';
 import { RepoInputBar } from './components/RepoInputBar';
 import { RiskList } from './components/RiskList';
+import { ScanProgressBar } from './components/ScanProgressBar';
 import { ScoreOverview } from './components/ScoreOverview';
 import {
   fetchAiModels,
   generateAiAdvice,
   getAiConfigStatus,
+  saveAiConfig,
   ScanApiError,
-  scanRepository,
+  scanRepositoryStream,
 } from './lib/api';
 
 interface PlatformMeta {
@@ -84,6 +85,10 @@ export default function App() {
   const [repoUrl, setRepoUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [activeScanUrl, setActiveScanUrl] = useState<string | null>(null);
+  const [scanStartedAt, setScanStartedAt] = useState<number>(0);
+  const [scanProgress, setScanProgress] = useState<ScanProgressEvent | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<ScanReport | null>(null);
   const [selectedDimension, setSelectedDimension] = useState<
@@ -106,6 +111,8 @@ export default function App() {
   });
   const [loadingModels, setLoadingModels] = useState(false);
   const [loadingAdvice, setLoadingAdvice] = useState(false);
+  const [savingConfig, setSavingConfig] = useState(false);
+  const [aiSaveSuccess, setAiSaveSuccess] = useState<string | null>(null);
   const [aiNotice, setAiNotice] = useState<string | null>(null);
   const [aiReport, setAiReport] = useState<AiAdviceReport | null>(null);
   const aiSeqRef = useRef(0);
@@ -131,6 +138,30 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!loading) return;
+
+    const STAGE_CAPS: Record<ScanProgressEvent['stage'], number> = {
+      validate: 11,
+      clone: 64,
+      metadata: 73,
+      scan: 91,
+      score: 97,
+      done: 100,
+    };
+
+    const id = window.setInterval(() => {
+      setScanProgress((prev) => {
+        if (!prev) return prev;
+        const cap = STAGE_CAPS[prev.stage] ?? 95;
+        if (prev.percent >= cap) return prev;
+        return { ...prev, percent: prev.percent + 1 };
+      });
+    }, 350);
+
+    return () => window.clearInterval(id);
+  }, [loading]);
+
   async function handleScan() {
     const trimmed = repoUrl.trim();
     if (!trimmed) {
@@ -142,6 +173,12 @@ export default function App() {
     aiSeqRef.current++;
     setLoading(true);
     setActiveScanUrl(trimmed);
+    setScanStartedAt(Date.now());
+    setScanProgress({
+      stage: 'validate',
+      percent: 4,
+      label: '正在连接服务端并准备拉取仓库',
+    });
     setError(null);
     setReport(null);
     setAiReport(null);
@@ -151,10 +188,30 @@ export default function App() {
     setSelectedSeverity('all');
 
     try {
-      const nextReport = await scanRepository(trimmed);
+      const nextReport = await scanRepositoryStream(trimmed, (event) => {
+        if (scanSeqRef.current !== currentSeq) return;
+        setScanProgress((prev) => {
+          const nextPercent = prev
+            ? Math.max(prev.percent, event.percent)
+            : event.percent;
+          return { ...event, percent: nextPercent };
+        });
+      });
+
       if (scanSeqRef.current !== currentSeq) {
         return;
       }
+
+      setScanProgress({
+        stage: 'done',
+        percent: 100,
+        label: '体检完成，正在生成可视化报告',
+      });
+      await new Promise((resolve) => setTimeout(resolve, 220));
+      if (scanSeqRef.current !== currentSeq) {
+        return;
+      }
+
       setReport(nextReport);
     } catch (err) {
       if (scanSeqRef.current !== currentSeq) {
@@ -169,6 +226,7 @@ export default function App() {
       if (scanSeqRef.current === currentSeq) {
         setLoading(false);
         setActiveScanUrl(null);
+        setScanProgress(null);
       }
     }
   }
@@ -177,7 +235,9 @@ export default function App() {
     const hasEnv = Boolean(aiConfigStatus?.hasEnvConfig);
     const hasCustomKey = Boolean(aiUiConfig.apiKey.trim());
     if (!hasEnv && !hasCustomKey) {
-      setAiNotice('请先填写 API Key（或在本地 .env 中配置 AI_API_KEY），再拉取可用模型列表。');
+      setAiNotice(
+        '请先填写 API Key（或在本地 .env 中配置 AI_API_KEY），再拉取可用模型列表。',
+      );
       setAiUiConfig((prev) => ({ ...prev, showCustomPanel: true }));
       return;
     }
@@ -202,7 +262,9 @@ export default function App() {
       }));
 
       if (res.models.length === 0) {
-        setAiNotice('接口返回成功但模型列表为空，请在输入框中手动填写模型名称。');
+        setAiNotice(
+          '接口返回成功但模型列表为空，请在输入框中手动填写模型名称。',
+        );
       }
     } catch (err) {
       setAiNotice(
@@ -215,13 +277,67 @@ export default function App() {
     }
   }
 
+  async function handleSaveAiConfig() {
+    const hasEnv = Boolean(aiConfigStatus?.hasEnvConfig);
+    const hasCustomKey = Boolean(aiUiConfig.apiKey.trim());
+    if (!hasEnv && !hasCustomKey) {
+      setAiNotice('请先填写 API Key，再点击保存到本地 .env。');
+      setAiUiConfig((prev) => ({ ...prev, showCustomPanel: true }));
+      return;
+    }
+
+    const effectiveBaseUrl =
+      aiUiConfig.baseUrl.trim() || aiConfigStatus?.defaultBaseUrl || '';
+    if (!effectiveBaseUrl) {
+      setAiNotice('请先选择厂商或填写 Base URL，再点击保存。');
+      setAiUiConfig((prev) => ({ ...prev, showCustomPanel: true }));
+      return;
+    }
+
+    setSavingConfig(true);
+    setAiNotice(null);
+    setAiSaveSuccess(null);
+
+    try {
+      const updated = await saveAiConfig({
+        baseUrl: effectiveBaseUrl,
+        ...(aiUiConfig.apiKey.trim()
+          ? { apiKey: aiUiConfig.apiKey.trim() }
+          : {}),
+        ...(aiUiConfig.model.trim()
+          ? { model: aiUiConfig.model.trim() }
+          : {}),
+      });
+
+      setAiConfigStatus(updated);
+      setAiUiConfig((prev) => ({
+        ...prev,
+        apiKey: '',
+        baseUrl: updated.defaultBaseUrl ?? prev.baseUrl,
+        model: updated.defaultModel ?? prev.model,
+        showCustomPanel: false,
+      }));
+      setAiSaveSuccess('已保存到本地 .env，刷新页面或重启后自动生效');
+    } catch (err) {
+      setAiNotice(
+        err instanceof ScanApiError
+          ? err.message
+          : '保存配置到本地 .env 失败，请稍后重试。',
+      );
+    } finally {
+      setSavingConfig(false);
+    }
+  }
+
   async function handleGenerateAdvice() {
     if (!report) return;
 
     const hasEnv = Boolean(aiConfigStatus?.hasEnvConfig);
     const hasCustomKey = Boolean(aiUiConfig.apiKey.trim());
     if (!hasEnv && !hasCustomKey) {
-      setAiNotice('尚未配置 AI API Key：请在本地 .env 中配置，或在上方设置面板填写 Base URL 与 API Key 后再生成。');
+      setAiNotice(
+        '尚未配置 AI API Key：请在本地 .env 中配置，或在上方设置面板填写 Base URL 与 API Key 后再生成。',
+      );
       setAiUiConfig((prev) => ({ ...prev, showCustomPanel: true }));
       return;
     }
@@ -229,7 +345,9 @@ export default function App() {
     const effectiveModel =
       aiUiConfig.model.trim() || aiConfigStatus?.defaultModel || '';
     if (!effectiveModel) {
-      setAiNotice('请先拉取并选择模型，或手动填写模型名称（例如 gpt-4o-mini）。');
+      setAiNotice(
+        '请先拉取并选择模型，或手动填写模型名称（例如 deepseek-chat）。',
+      );
       setAiUiConfig((prev) => ({ ...prev, showCustomPanel: true }));
       return;
     }
@@ -237,6 +355,9 @@ export default function App() {
     const currentAiSeq = ++aiSeqRef.current;
     setLoadingAdvice(true);
     setAiNotice(null);
+    setAiUiConfig((prev) =>
+      prev.showCustomPanel ? { ...prev, showCustomPanel: false } : prev,
+    );
 
     try {
       const advice = await generateAiAdvice({
@@ -272,16 +393,18 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-4 px-6 py-4">
-          <div className="flex items-center gap-2.5">
-            <ShieldCheck className="h-6 w-6 text-indigo-600" />
+    <div className="min-h-screen bg-[#f5f5f4] text-[#1c1917]">
+      <header className="sticky top-0 z-30 border-b border-[#e7e5e4] bg-[#fafaf9]/90 backdrop-blur">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-4">
+          <div className="flex items-center gap-3">
+            <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-[#1c1917] font-mono text-xs font-bold tracking-tight text-white">
+              RC
+            </span>
             <div>
-              <h1 className="text-lg font-semibold tracking-tight">
+              <h1 className="text-base font-semibold tracking-tight text-[#1c1917]">
                 Git 仓库接入体检
               </h1>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-[#78716c]">
                 Repo Checkup · 接入就绪度评估与风险排查
               </p>
             </div>
@@ -291,7 +414,7 @@ export default function App() {
             {SUPPORTED_PLATFORMS.map((platform) => (
               <span
                 key={platform.id}
-                className="rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700"
+                className="rounded-full border border-[#e7e5e4] bg-white px-3 py-1 text-xs font-medium text-[#57534e]"
               >
                 {platform.label}
               </span>
@@ -300,7 +423,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl space-y-6 px-6 py-8">
+      <main className="mx-auto max-w-6xl space-y-7 px-6 py-8">
         <RepoInputBar
           repoUrl={repoUrl}
           loading={loading}
@@ -321,23 +444,12 @@ export default function App() {
           onSubmit={handleScan}
         />
 
-        {loading && (
-          <section className="flex items-center gap-4 rounded-2xl border border-indigo-200 bg-indigo-50/70 p-6">
-            <Loader2 className="h-6 w-6 shrink-0 animate-spin text-indigo-600" />
-            <div className="min-w-0">
-              <h3 className="text-sm font-semibold text-indigo-950">
-                正在浅克隆仓库并执行四大维度体检...
-              </h3>
-              {activeScanUrl && (
-                <p className="mt-0.5 truncate font-mono text-xs text-indigo-800">
-                  {activeScanUrl}
-                </p>
-              )}
-              <p className="mt-1 text-xs text-indigo-700">
-                正在拉取目标分支、记录 Commit 信息、清理 .git 目录并分析代码结构与敏感信息，完成后会自动清理临时目录。
-              </p>
-            </div>
-          </section>
+        {loading && scanProgress && (
+          <ScanProgressBar
+            repoUrl={activeScanUrl ?? repoUrl}
+            progress={scanProgress}
+            startedAt={scanStartedAt}
+          />
         )}
 
         {report && !loading && (
@@ -352,13 +464,17 @@ export default function App() {
               uiConfig={aiUiConfig}
               loadingModels={loadingModels}
               loadingAdvice={loadingAdvice}
+              savingConfig={savingConfig}
+              saveSuccess={aiSaveSuccess}
               notice={aiNotice}
               aiReport={aiReport}
               onUpdateConfig={(patch) => {
                 setAiUiConfig((prev) => ({ ...prev, ...patch }));
                 if (aiNotice) setAiNotice(null);
+                if (aiSaveSuccess) setAiSaveSuccess(null);
               }}
               onFetchModels={handleFetchModels}
+              onSaveConfig={handleSaveAiConfig}
               onGenerateAdvice={handleGenerateAdvice}
             />
             <RiskList
@@ -374,10 +490,10 @@ export default function App() {
         {!report && !loading && (
           <section className="space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-base font-semibold text-slate-900">
-                四大核心体检维度
+              <h2 className="text-sm font-semibold text-[#1c1917]">
+                四大核心扫描维度 · 六维能力雷达
               </h2>
-              <span className="text-xs text-slate-500">
+              <span className="text-xs text-[#78716c]">
                 输入上方仓库链接后生成可视化报告
               </span>
             </div>
@@ -388,22 +504,22 @@ export default function App() {
                 return (
                   <div
                     key={item.id}
-                    className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs"
+                    className="rounded-2xl border border-[#e7e5e4] bg-white p-6 shadow-[0_2px_10px_rgba(28,25,23,0.03)] transition hover:border-[#d6d3d1]"
                   >
                     <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-2.5">
-                        <div className="rounded-lg bg-indigo-50 p-2 text-indigo-600">
-                          <Icon className="h-5 w-5" />
+                      <div className="flex items-center gap-3">
+                        <div className="rounded-xl border border-[#e7e5e4] bg-[#fafaf9] p-2.5 text-[#1c1917]">
+                          <Icon className="h-4 w-4" />
                         </div>
-                        <h3 className="font-medium text-slate-900">
+                        <h3 className="text-sm font-semibold text-[#1c1917]">
                           {item.title}
                         </h3>
                       </div>
-                      <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+                      <span className="rounded-full border border-[#e7e5e4] bg-[#fafaf9] px-2.5 py-0.5 font-mono text-xs font-medium text-[#57534e]">
                         {item.weight}
                       </span>
                     </div>
-                    <p className="mt-3 text-sm leading-relaxed text-slate-600">
+                    <p className="mt-3 text-xs leading-relaxed text-[#78716c]">
                       {item.description}
                     </p>
                   </div>

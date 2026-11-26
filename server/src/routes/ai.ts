@@ -6,6 +6,7 @@ import {
   fetchAvailableModels,
   generateAiAdvice,
   getAiConfigStatus,
+  saveAiConfig,
 } from '../services/aiService.js';
 
 const modelsRequestSchema = z
@@ -104,6 +105,36 @@ export const aiRoute = new Hono();
 
 aiRoute.get('/config', (c) => {
   return c.json(getAiConfigStatus(), 200);
+});
+
+aiRoute.post('/config', async (c) => {
+  const body: unknown = await c.req.json().catch(() => null);
+  const parsed = clientConfigSchema.safeParse(body);
+  if (!parsed.success || !parsed.data) {
+    const response: ScanErrorResponse = {
+      error: '保存 AI 配置的参数格式不正确',
+      code: 'INVALID_REQUEST',
+    };
+    return c.json(response, 400);
+  }
+
+  try {
+    const status = saveAiConfig(parsed.data);
+    return c.json(status, 200);
+  } catch (error) {
+    if (error instanceof AiServiceError) {
+      const response: ScanErrorResponse = {
+        error: error.message,
+        code: error.code,
+      };
+      return c.json(response, mapAiErrorStatus(error.code));
+    }
+    const response: ScanErrorResponse = {
+      error: '保存配置到本地 .env 失败',
+      code: 'UPSTREAM_ERROR',
+    };
+    return c.json(response, 502);
+  }
 });
 
 aiRoute.post('/models', async (c) => {
