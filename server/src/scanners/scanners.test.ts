@@ -94,10 +94,12 @@ describe('scanners & scoring', () => {
     ).toBe('medium');
   });
 
-  it('detects hardcoded Windows and macOS paths in code while ignoring markdown docs', async () => {
+  it('detects hardcoded Windows and macOS paths, ignores docs/UI labels, and downgrades test files', async () => {
     const dir = await createFixtureRepo({
       'README.md': 'Example path C:\\Users\\alice\\demo and /Users/alice/demo\n',
       'package.json': JSON.stringify({ scripts: { start: 'node index.js' } }),
+      'src/ui.ts': "export const tip = '识别 C:\\\\、/Users/ 等本机绝对路径。';\n",
+      'src/example.test.ts': 'const fixture = "C:\\\\Users\\\\bob\\\\test";\n',
       'src/config.ts': [
         'const winPath = "C:\\\\Users\\\\alice\\\\data";',
         'const macPath = "/Users/alice/workspace/app";',
@@ -105,17 +107,26 @@ describe('scanners & scoring', () => {
     });
 
     const out = await runScanners(dir, defaultScanners);
-    const pathRisks = out.results
-      .find((r) => r.dimension === 'hardcoded_paths')
-      ?.risks ?? [];
+    const pathResult = out.results.find((r) => r.dimension === 'hardcoded_paths');
+    const pathRisks = pathResult?.risks ?? [];
 
-    expect(pathRisks).toHaveLength(2);
-    expect(pathRisks.every((r) => r.filePath === 'src/config.ts')).toBe(true);
-    expect(pathRisks.map((r) => r.line)).toEqual([1, 2]);
+    expect(pathRisks.some((r) => r.filePath === 'src/ui.ts')).toBe(false);
+    expect(pathRisks).toHaveLength(3);
+
+    const configRisks = pathRisks.filter((r) => r.filePath === 'src/config.ts');
+    expect(configRisks.map((r) => r.line)).toEqual([1, 2]);
+    expect(configRisks.every((r) => r.severity === 'medium')).toBe(true);
+
+    const testRisk = pathRisks.find((r) => r.filePath === 'src/example.test.ts');
+    expect(testRisk?.severity).toBe('low');
+    expect(testRisk?.ruleId).toBe('HARDCODED_ABSOLUTE_PATH_IN_TEST');
+
+    // Only src/config.ts deducts points (5 + 1 = 6); test file deducts 0.
+    expect(pathResult?.score).toBe(19);
   });
 
   it('detects committed .env and secret patterns, masks snippets, and flags high_risk blocking', async () => {
-    const fakeSk = ['sk-proj-', 'AbCdEfGhIjKlMnOpQrStUvWxYz123456'].join('');
+    const fakeSk = ['sk-proj-', 'Qm9xR2vK8nP4wL7zT1cY5hJ3mF6dB0sX'].join('');
     const fakeAkid = ['AKID', 'z8krbsJ5yKBZQpn74WFkmLPx3demo001'].join('');
     const fakeBearer = [
       'Bearer ',
@@ -127,6 +138,12 @@ describe('scanners & scoring', () => {
       'sk-example-',
       'placeholder-123456789012345',
     ].join('');
+    const repeatedSk = ['sk-', 'a'.repeat(24)].join('');
+    const repeatedAkid = ['AKID', '0'.repeat(24)].join('');
+    const repeatedBearer = ['Bearer ', '1'.repeat(24)].join('');
+    const javaFakePlainKey = ['sk-secret-', 'plain-key-999'].join('');
+    const javaSeqKey = ['sk-', '1234567890', 'abcdefghijklmnopqrstuvwxyz'].join('');
+    const javaPlainText = ['sk-plain-', 'text-without-prefix'].join('');
 
     const dir = await createFixtureRepo({
       'README.md': '# Leak Demo\n',
@@ -138,6 +155,14 @@ describe('scanners & scoring', () => {
         `const c = "${fakeBearer}";`,
         `const k = "${fakePem}";`,
         `const placeholder = "${fakePlaceholder}";`,
+        `const rep1 = "${repeatedSk}";`,
+        `const rep2 = "${repeatedAkid}";`,
+        `const rep3 = "${repeatedBearer}";`,
+      ].join('\n'),
+      'ray-agent-runtime/src/test/java/FakeCipherTest.java': [
+        `String a = "${javaFakePlainKey}";`,
+        `String b = "${javaSeqKey}";`,
+        `String c = "${javaPlainText}";`,
       ].join('\n'),
     });
 
@@ -154,6 +179,27 @@ describe('scanners & scoring', () => {
     expect(serialized).not.toContain(fakeSk);
     expect(serialized).not.toContain(fakeAkid);
     expect(serialized).not.toContain('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.sig');
-    expect(maskSecret(fakeSk)).toBe('sk-p****3456');
+    expect(maskSecret(fakeSk)).toBe('sk-p****B0sX');
+  });
+
+  it('downgrades high-entropy secrets in test files to medium without blocking', async () => {
+    const testRandomSk = ['sk-proj-', 'Qm9xR2vK8nP4wL7zT1cY5hJ3mF6dB0sX'].join('');
+    const dir = await createFixtureRepo({
+      'README.md': '# Demo\n',
+      'package.json': JSON.stringify({ scripts: { start: 'node app.js' } }),
+      'ray-agent-runtime/src/test/java/DemoTest.java': `String k = "${testRandomSk}";\n`,
+    });
+
+    const out = await runScanners(dir, defaultScanners);
+    const report = buildScanReport(baseRepoMeta, out.results);
+    const secretDim = report.dimensions.find((d) => d.id === 'secrets');
+    const secretRisks = report.risks.filter((r) => r.dimension === 'secrets');
+
+    expect(report.hasBlockingRisk).toBe(false);
+    expect(report.readinessLevel).toBe('ready');
+    expect(secretDim?.score).toBe(25);
+    expect(secretRisks).toHaveLength(1);
+    expect(secretRisks[0]?.severity).toBe('medium');
+    expect(secretRisks[0]?.title).toContain('位于测试文件');
   });
 });

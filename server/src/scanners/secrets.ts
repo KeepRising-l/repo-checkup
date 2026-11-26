@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type { RiskItem } from '@repo-checkup/shared';
+import { isTestOrFixtureFile } from './fileClassifier.js';
 import type { ScannerModule } from './types.js';
 
 const ENV_TEMPLATE_RE =
@@ -67,6 +68,18 @@ const PLACEHOLDER_INDICATORS = [
   'your-',
   'dummy',
   'changeme',
+  'plain-text',
+  'plain_text',
+  'plain-key',
+  'plain_key',
+  'fake-',
+  'fake_',
+  'mock-',
+  'mock_',
+  'test-key',
+  'test_key',
+  '12345678',
+  'abcdefgh',
   '${',
   '{{',
   '<your',
@@ -96,8 +109,13 @@ function isPlaceholder(value: string): boolean {
   if (PLACEHOLDER_INDICATORS.some((indicator) => lower.includes(indicator))) {
     return true;
   }
-  // Repeated single character like sk-aaaaaaaaaaaaaaaaaaaa
-  if (/^(.)\1{10,}$/.test(value)) {
+
+  const stripped = value
+    .replace(/^(?:Bearer\s+|sk-(?:proj-|live-|test-)?|AKID|AKIA)/i, '')
+    .trim();
+
+  // Repeated single character after prefix, e.g. sk-aaaa... or AKID0000...
+  if (/^(.)\1{9,}$/.test(stripped) || /(.)\1{11,}/.test(stripped)) {
     return true;
   }
   return false;
@@ -174,6 +192,7 @@ export const secretsScanner: ScannerModule = {
         continue;
       }
 
+      const isTestFile = isTestOrFixtureFile(file.relativePath);
       const lines = file.content.split(/\r?\n/);
       for (let idx = 0; idx < lines.length; idx++) {
         const line = lines[idx] ?? '';
@@ -192,28 +211,48 @@ export const secretsScanner: ScannerModule = {
             continue;
           }
 
-          hasBlockingRisk = true;
-          deduction += 15;
-          risks.push({
-            id: `secret-${rule.ruleId}-${file.relativePath}-${idx + 1}`,
-            dimension: 'secrets',
-            ruleId: rule.ruleId,
-            title: rule.title,
-            severity: 'high',
-            filePath: file.relativePath,
-            line: idx + 1,
-            snippet: maskLineSnippet(line, matches),
-            suggestion: rule.suggestion,
-          });
+          if (isTestFile) {
+            deduction += 5;
+            risks.push({
+              id: `secret-${rule.ruleId}-${file.relativePath}-${idx + 1}`,
+              dimension: 'secrets',
+              ruleId: rule.ruleId,
+              title: `${rule.title}（位于测试文件，请核实）`,
+              severity: 'medium',
+              filePath: file.relativePath,
+              line: idx + 1,
+              snippet: maskLineSnippet(line, matches),
+              suggestion:
+                '请确认是否为真实凭证；若仅为单测模拟数据，建议替换为显式占位符（如 sk-mock-key-placeholder）。',
+            });
+          } else {
+            hasBlockingRisk = true;
+            deduction += 15;
+            risks.push({
+              id: `secret-${rule.ruleId}-${file.relativePath}-${idx + 1}`,
+              dimension: 'secrets',
+              ruleId: rule.ruleId,
+              title: rule.title,
+              severity: 'high',
+              filePath: file.relativePath,
+              line: idx + 1,
+              snippet: maskLineSnippet(line, matches),
+              suggestion: rule.suggestion,
+            });
+          }
         }
       }
     }
 
     const score = Math.max(0, 30 - Math.min(30, deduction));
-    const summary =
-      risks.length === 0
-        ? '未检测到密钥或敏感文件泄露风险'
-        : `发现 ${risks.length} 项高危密钥或敏感信息风险`;
+    const highRiskCount = risks.filter((r) => r.severity === 'high').length;
+    let summary = '未检测到密钥或敏感文件泄露风险';
+    if (risks.length > 0) {
+      summary =
+        highRiskCount > 0
+          ? `发现 ${risks.length} 项密钥或敏感信息风险（其中高危 ${highRiskCount} 项）`
+          : `在测试文件中发现 ${risks.length} 项疑似密钥（请人工核实）`;
+    }
 
     return {
       dimension: 'secrets',

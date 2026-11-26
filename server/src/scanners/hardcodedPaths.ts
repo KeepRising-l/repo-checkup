@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type { RiskItem } from '@repo-checkup/shared';
+import { isTestOrFixtureFile } from './fileClassifier.js';
 import type { ScannerModule } from './types.js';
 
 const DOC_EXTENSIONS = new Set(['.md', '.mdx', '.txt', '.rst']);
@@ -7,7 +8,7 @@ const MAX_HITS_PER_FILE = 10;
 const MAX_TOTAL_REPORTED_HITS = 50;
 
 const WINDOWS_BACKSLASH_PATH_RE =
-  /(?<![A-Za-z0-9_])([A-Za-z]:\\(?:[^\\/:*?"<>|\r\n'`,;\s]+\\)*[^\\/:*?"<>|\r\n'`,;\s]*)/;
+  /(?<![A-Za-z0-9_])([A-Za-z]:\\{1,2}(?:[A-Za-z0-9_.$\u4e00-\u9fff]{2,}[^\\/:*?"<>|\r\n'`,;)\]}\s、。，；：！？]*|[A-Za-z0-9_.$\u4e00-\u9fff]\\{1,2}[A-Za-z0-9_.$\u4e00-\u9fff][^\\/:*?"<>|\r\n'`,;)\]}\s、。，；：！？]*)(?:\\{1,2}[^\\/:*?"<>|\r\n'`,;)\]}\s、。，；：！？]+)*)/;
 
 const WINDOWS_FORWARD_PATH_RE =
   /(?<![A-Za-z0-9_:])([A-Za-z]:\/(?:Users|Program Files|Windows|Projects|Code|Work|Desktop|Documents|Downloads|AppData|Temp|Data|Workspace)[^\s'"`,;)]*)/i;
@@ -54,14 +55,16 @@ export const hardcodedPathsScanner: ScannerModule = {
   maxScore: 25,
   async scan(ctx) {
     const risks: RiskItem[] = [];
-    const perFileHitCount = new Map<string, number>();
-    let totalMatchedLines = 0;
+    const prodHitsByFile = new Map<string, number>();
+    let prodMatchedLines = 0;
+    let testMatchedLines = 0;
 
     for (const file of ctx.files) {
       if (!file.isText || !file.content || isDocFile(file.relativePath)) {
         continue;
       }
 
+      const isTestFile = isTestOrFixtureFile(file.relativePath);
       const lines = file.content.split(/\r?\n/);
       let fileHits = 0;
 
@@ -72,9 +75,16 @@ export const hardcodedPathsScanner: ScannerModule = {
           continue;
         }
 
-        totalMatchedLines++;
         fileHits++;
-        perFileHitCount.set(file.relativePath, fileHits);
+        if (isTestFile) {
+          testMatchedLines++;
+        } else {
+          prodMatchedLines++;
+          prodHitsByFile.set(
+            file.relativePath,
+            (prodHitsByFile.get(file.relativePath) ?? 0) + 1,
+          );
+        }
 
         if (
           fileHits <= MAX_HITS_PER_FILE &&
@@ -83,33 +93,47 @@ export const hardcodedPathsScanner: ScannerModule = {
           risks.push({
             id: `hardcoded-path-${file.relativePath}-${idx + 1}`,
             dimension: 'hardcoded_paths',
-            ruleId: 'HARDCODED_ABSOLUTE_PATH',
-            title: '检测到本机绝对路径硬编码',
-            severity: 'medium',
+            ruleId: isTestFile
+              ? 'HARDCODED_ABSOLUTE_PATH_IN_TEST'
+              : 'HARDCODED_ABSOLUTE_PATH',
+            title: isTestFile
+              ? '测试文件中检测到本机绝对路径（低优先级提示）'
+              : '检测到本机绝对路径硬编码',
+            severity: isTestFile ? 'low' : 'medium',
             filePath: file.relativePath,
             line: idx + 1,
             snippet: truncateSnippet(lineText),
-            suggestion:
-              '改为相对路径、基于运行目录动态拼接（如 path.resolve），或通过环境变量注入路径配置。',
+            suggestion: isTestFile
+              ? '测试夹具中的模拟路径一般不影响运行；若为真实本机路径，建议改为临时目录（如 os.tmpdir()）或相对夹具路径。'
+              : '改为相对路径、基于运行目录动态拼接（如 path.resolve），或通过环境变量注入路径配置。',
           });
         }
       }
     }
 
     let deduction = 0;
-    for (const hitCount of perFileHitCount.values()) {
+    for (const hitCount of prodHitsByFile.values()) {
       deduction += 5 + Math.max(0, hitCount - 1);
     }
 
     const score = Math.max(0, 25 - Math.min(25, deduction));
-    const affectedFiles = perFileHitCount.size;
+    const affectedProdFiles = prodHitsByFile.size;
+    const totalMatchedLines = prodMatchedLines + testMatchedLines;
 
     let summary = '未发现硬编码绝对路径';
     if (totalMatchedLines > 0) {
-      summary =
-        totalMatchedLines > risks.length
-          ? `在 ${affectedFiles} 个文件中发现 ${totalMatchedLines} 处硬编码路径（已展示前 ${risks.length} 条）`
-          : `在 ${affectedFiles} 个文件中发现 ${totalMatchedLines} 处硬编码路径`;
+      if (prodMatchedLines === 0) {
+        summary = `仅在测试/夹具文件中发现 ${testMatchedLines} 处路径示例（不计入扣分）`;
+      } else {
+        const testNote =
+          testMatchedLines > 0
+            ? `（另有 ${testMatchedLines} 处位于测试文件）`
+            : '';
+        summary = `在 ${affectedProdFiles} 个源码文件中发现 ${prodMatchedLines} 处硬编码路径${testNote}`;
+      }
+      if (totalMatchedLines > risks.length) {
+        summary += `（已展示前 ${risks.length} 条）`;
+      }
     }
 
     return {
